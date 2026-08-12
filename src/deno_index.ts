@@ -75,6 +75,17 @@ async function handleWebSocket(req: Request): Promise<Response> {
 
 
 const handler = async (req: Request): Promise<Response> => {
+  // CORS 跨域拦截与处理
+if (req.method === "OPTIONS") {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "*",
+    },
+  });
+}
   // Basic Auth 验证
   const authHeader = req.headers.get("Authorization");
   if (AUTH_USERNAME && AUTH_PASSWORD && (!authHeader || !isValidAuth(authHeader))) {
