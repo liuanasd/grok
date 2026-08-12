@@ -1,11 +1,10 @@
 import { serve } from "https://deno.land/std@0.202.0/http/server.ts";
 
 const TARGET_URL = "https://grok.com";
-const ORIGIN_DOMAIN = "grok.com"; // 注意：此处应仅为域名，不含协议
+const ORIGIN_DOMAIN = "grok.com"; 
 
 const AUTH_USERNAME = Deno.env.get("AUTH_USERNAME");
 const AUTH_PASSWORD = Deno.env.get("AUTH_PASSWORD");
-
 const COOKIE = Deno.env.get("cookie");
 
 // 验证函数
@@ -19,9 +18,9 @@ function isValidAuth(authHeader: string): boolean {
     return false;
   }
 }
+
 async function handleWebSocket(req: Request): Promise<Response> {
   const { socket: clientWs, response } = Deno.upgradeWebSocket(req);
-
   const url = new URL(req.url);
   const targetUrl = `wss://grok.com${url.pathname}${url.search}`;
 
@@ -73,19 +72,29 @@ async function handleWebSocket(req: Request): Promise<Response> {
   return response;
 }
 
-
 const handler = async (req: Request): Promise<Response> => {
-  // CORS 跨域拦截与处理
-if (req.method === "OPTIONS") {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "*",
-    },
-  });
-}
+  // 1. OPTIONS 预检请求跨域拦截
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+      },
+    });
+  }
+  
+  const url = new URL(req.url);
+  
+  // 健康检查响应
+  if (url.pathname === "/") {
+    return new Response("Grok proxy is running!", { 
+      status: 200, 
+      headers: { "Access-Control-Allow-Origin": "*" } 
+    });
+  }
+
   // Basic Auth 验证
   const authHeader = req.headers.get("Authorization");
   if (AUTH_USERNAME && AUTH_PASSWORD && (!authHeader || !isValidAuth(authHeader))) {
@@ -93,6 +102,7 @@ if (req.method === "OPTIONS") {
       status: 401,
       headers: {
         "WWW-Authenticate": 'Basic realm="Proxy Authentication Required"',
+        "Access-Control-Allow-Origin": "*",
       },
     });
   }
@@ -101,7 +111,6 @@ if (req.method === "OPTIONS") {
     return handleWebSocket(req);
   }
 
-  const url = new URL(req.url);
   const targetUrl = new URL(url.pathname + url.search, TARGET_URL);
 
   // 构造代理请求
@@ -109,7 +118,7 @@ if (req.method === "OPTIONS") {
   headers.set("Host", targetUrl.host);
   headers.delete("Referer");
   headers.delete("Cookie");
-  headers.delete("Authorization"); // 删除验证头，不转发到目标服务器
+  headers.delete("Authorization"); 
   headers.set("cookie", COOKIE || '');
 
   try {
@@ -120,34 +129,27 @@ if (req.method === "OPTIONS") {
       redirect: "manual",
     });
 
-    // 处理响应头
     const responseHeaders = new Headers(proxyResponse.headers);
-    responseHeaders.delete("Content-Length"); // 移除固定长度头
+    responseHeaders.delete("Content-Length"); 
     const location = responseHeaders.get("Location");
     if (location) {
       responseHeaders.set("Location", location.replace(TARGET_URL, `https://${ORIGIN_DOMAIN}`));
     }
+    
+    // 强制写入所有响应跨域许可
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    responseHeaders.set("Access-Control-Allow-Headers", "*");
+    responseHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 
-    // 处理无响应体状态码
     if ([204, 205, 304].includes(proxyResponse.status)) {
       return new Response(null, { status: proxyResponse.status, headers: responseHeaders });
     }
 
-    // 创建流式转换器
     const transformStream = new TransformStream({
       transform: async (chunk, controller) => {
         const contentType = responseHeaders.get("Content-Type") || "";
         if (contentType.startsWith("text/") || contentType.includes("json")) {
           let text = new TextDecoder("utf-8", { stream: true }).decode(chunk);
-
-          //   if(contentType.includes("json"))
-          //   {
-          //       if(text.includes("streamingImageGenerationResponse"))
-          //       {
-          //           text = text.replaceAll('users/','https://assets.grok.com/users/');
-          //       }
-          //   }
-
           controller.enqueue(
             new TextEncoder().encode(text.replaceAll(TARGET_URL, ORIGIN_DOMAIN))
           );
@@ -157,7 +159,6 @@ if (req.method === "OPTIONS") {
       }
     });
 
-    // 创建可读流
     const readableStream = proxyResponse.body?.pipeThrough(transformStream);
 
     return new Response(readableStream, {
@@ -165,7 +166,14 @@ if (req.method === "OPTIONS") {
       headers: responseHeaders,
     });
   } catch (error) {
-    return new Response(`Proxy Error: ${error.message}`, { status: 500 });
+    // 异常报错带跨域
+    return new Response(`Proxy Error: ${(error as Error).message}`, { 
+      status: 500,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+      }
+    });
   }
 };
 
