@@ -158,4 +158,4 @@ const handler = async (req: Request): Promise<Response> => {
   }
 };
 
-serve(handler, { port: 8000 });
+serve(handler);
